@@ -75,8 +75,8 @@ with open('cat_to_name.json', 'r') as f:
     cat_to_name = json.load(f)
 
 def load_model (arch, hidden_units):
-    if arch == 'vgg13': #setting model based on vgg13
-        model = models.vgg13 (pretrained = True)
+    if arch == 'vgg16': #setting model based on vgg13
+        model = models.vgg16 (pretrained = True)
         for param in model.parameters():
             param.requires_grad = False
         if hidden_units: #in case hidden_units were given
