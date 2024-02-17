@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument('data_dir', metavar='data_dir', type=str)
     parser.add_argument('--save_dir', action='store', dest='save_dir', type=str, default='train_checkpoint.pth')
     parser.add_argument('--arch', action='store', dest='arch', type=str, default='vgg16', choices=['vgg16', 'densenet121'])
-    parser.add_argument('--learning_rate', action='store', dest='learning_rate', type=float, default=0.001)
+    parser.add_argument('--lrn', action='store', dest='learning_rate', type=float, default=0.001)
     parser.add_argument('--hidden_units', action='store', dest='hidden_units', type=int, default=512)
     parser.add_argument('--epochs', action='store', dest='epochs', type=int, default=1)
     parser.add_argument('--gpu', action='store_true', default=False)
