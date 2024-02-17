@@ -1,132 +1,220 @@
+#importing necessary libraries
+import matplotlib.pyplot as plt
+import torch
+import numpy as np
+from torch import nn
+from torch import optim
+from torchvision import datasets, models, transforms
+import torch.nn.functional as F
+import torch.utils.data
+import pandas as pd
+from collections import OrderedDict
+from PIL import Image
 import argparse
 import json
-import numpy as np
-import torch
-import torchvision
-import torch.nn.functional as F
-from PIL import Image
+
+# define Mandatory and Optional Arguments for the script
+parser = argparse.ArgumentParser (description = "Parser of training script")
+
+parser.add_argument ('data_dir', help = 'Provide data directory. Mandatory argument', type = str)
+parser.add_argument ('--save_dir', help = 'Provide saving directory. Optional argument', type = str)
+parser.add_argument ('--arch', help = 'Vgg13 can be used if this argument specified, otherwise Alexnet will be used', type = str)
+parser.add_argument ('--lrn', help = 'Learning rate, default value 0.001', type = float)
+parser.add_argument ('--hidden_units', help = 'Hidden units in Classifier. Default value is 2048', type = int)
+parser.add_argument ('--epochs', help = 'Number of epochs', type = int)
+parser.add_argument ('--GPU', help = "Option to use GPU", type = str)
+
+#setting values data loading
+args = parser.parse_args ()
+
+data_dir = args.data_dir
+train_dir = data_dir + '/train'
+valid_dir = data_dir + '/valid'
+test_dir = data_dir + '/test'
+
+#defining device: either cuda or cpu
+if args.GPU == 'GPU':
+    device = 'cuda'
+else:
+    device = 'cpu'
+
+#data loading
+if data_dir: #making sure we do have value for data_dir
+    # Define your transforms for the training, validation, and testing sets
+    train_data_transforms = transforms.Compose ([transforms.RandomRotation (30),
+                                                transforms.RandomResizedCrop (224),
+                                                transforms.RandomHorizontalFlip (),
+                                                transforms.ToTensor (),
+                                                transforms.Normalize ([0.485, 0.456, 0.406],[0.229, 0.224, 0.225])
+                                                ])
+
+    valid_data_transforms = transforms.Compose ([transforms.Resize (255),
+                                                transforms.CenterCrop (224),
+                                                transforms.ToTensor (),
+                                                transforms.Normalize ([0.485, 0.456, 0.406],[0.229, 0.224, 0.225])
+                                                ])
+
+    test_data_transforms = transforms.Compose ([transforms.Resize (255),
+                                                transforms.CenterCrop (224),
+                                                transforms.ToTensor (),
+                                                transforms.Normalize ([0.485, 0.456, 0.406],[0.229, 0.224, 0.225])
+                                                ])
+    # Load the datasets with ImageFolder
+    train_image_datasets = datasets.ImageFolder (train_dir, transform = train_data_transforms)
+    valid_image_datasets = datasets.ImageFolder (valid_dir, transform = valid_data_transforms)
+    test_image_datasets = datasets.ImageFolder (test_dir, transform = test_data_transforms)
+
+    # Using the image datasets and the trainforms, define the dataloaders
+    train_loader = torch.utils.data.DataLoader(train_image_datasets, batch_size = 64, shuffle = True)
+    valid_loader = torch.utils.data.DataLoader(valid_image_datasets, batch_size = 64, shuffle = True)
+    test_loader = torch.utils.data.DataLoader(test_image_datasets, batch_size = 64, shuffle = True)
+    #end of data loading block
+
+#mapping from category label to category name
+with open('cat_to_name.json', 'r') as f:
+    cat_to_name = json.load(f)
+
+def load_model (arch, hidden_units):
+    if arch == 'vgg13': #setting model based on vgg13
+        model = models.vgg13 (pretrained = True)
+        for param in model.parameters():
+            param.requires_grad = False
+        if hidden_units: #in case hidden_units were given
+            classifier = nn.Sequential  (OrderedDict ([
+                            ('fc1', nn.Linear (25088, 4096)),
+                            ('relu1', nn.ReLU ()),
+                            ('dropout1', nn.Dropout (p = 0.3)),
+                            ('fc2', nn.Linear (4096, hidden_units)),
+                            ('relu2', nn.ReLU ()),
+                            ('dropout2', nn.Dropout (p = 0.3)),
+                            ('fc3', nn.Linear (hidden_units, 102)),
+                            ('output', nn.LogSoftmax (dim =1))
+                            ]))
+        else: #if hidden_units not given
+            classifier = nn.Sequential  (OrderedDict ([
+                        ('fc1', nn.Linear (25088, 4096)),
+                        ('relu1', nn.ReLU ()),
+                        ('dropout1', nn.Dropout (p = 0.3)),
+                        ('fc2', nn.Linear (4096, 2048)),
+                        ('relu2', nn.ReLU ()),
+                        ('dropout2', nn.Dropout (p = 0.3)),
+                        ('fc3', nn.Linear (2048, 102)),
+                        ('output', nn.LogSoftmax (dim =1))
+                        ]))
+    else: #setting model based on default Alexnet ModuleList
+        arch = 'alexnet' #will be used for checkpoint saving, so should be explicitly defined
+        model = models.alexnet (pretrained = True)
+        for param in model.parameters():
+            param.requires_grad = False
+        if hidden_units: #in case hidden_units were given
+            classifier = nn.Sequential  (OrderedDict ([
+                            ('fc1', nn.Linear (9216, 4096)),
+                            ('relu1', nn.ReLU ()),
+                            ('dropout1', nn.Dropout (p = 0.3)),
+                            ('fc2', nn.Linear (4096, hidden_units)),
+                            ('relu2', nn.ReLU ()),
+                            ('dropout2', nn.Dropout (p = 0.3)),
+                            ('fc3', nn.Linear (hidden_units, 102)),
+                            ('output', nn.LogSoftmax (dim =1))
+                            ]))
+        else: #if hidden_units not given
+            classifier = nn.Sequential  (OrderedDict ([
+                        ('fc1', nn.Linear (9216, 4096)),
+                        ('relu1', nn.ReLU ()),
+                        ('dropout1', nn.Dropout (p = 0.3)),
+                        ('fc2', nn.Linear (4096, 2048)),
+                        ('relu2', nn.ReLU ()),
+                        ('dropout2', nn.Dropout (p = 0.3)),
+                        ('fc3', nn.Linear (2048, 102)),
+                        ('output', nn.LogSoftmax (dim =1))
+                        ]))
+    model.classifier = classifier #we can set classifier only once as cluasses self excluding (if/else)
+    return model, arch
+
+# Defining validation Function. will be used during training
+def validation(model, valid_loader, criterion):
+    model.to (device)
+
+    valid_loss = 0
+    accuracy = 0
+    for inputs, labels in valid_loader:
+
+        inputs, labels = inputs.to(device), labels.to(device)
+        output = model.forward(inputs)
+        valid_loss += criterion(output, labels).item()
+
+        ps = torch.exp(output)
+        equality = (labels.data == ps.max(dim=1)[1])
+        accuracy += equality.type(torch.FloatTensor).mean()
+
+    return valid_loss, accuracy
+
+#loading model using above defined functiion
+model, arch = load_model (args.arch, args.hidden_units)
+
+#Actual training of the model
+#initializing criterion and optimizer
+criterion = nn.NLLLoss ()
+if args.lrn: #if learning rate was provided
+    optimizer = optim.Adam (model.classifier.parameters (), lr = args.lrn)
+else:
+    optimizer = optim.Adam (model.classifier.parameters (), lr = 0.001)
 
 
-def parse_args():
-    """
-    Parse command line arguments.
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument('image_path', metavar='image_path', type=str, default='flowers/test/58/image_02663.jpg')
-    parser.add_argument('checkpoint', metavar='checkpoint', type=str, default='train_checkpoint.pth')
-    parser.add_argument('--top_k', action='store', dest="top_k", type=int, default=5)
-    parser.add_argument('--category_names', action='store', dest='category_names', type=str, default='cat_to_name.json')
-    parser.add_argument('--gpu', action='store_true', default=False)
-    return parser.parse_args()
+model.to (device) #device can be either cuda or cpu
+#setting number of epochs to be run
+if args.epochs:
+    epochs = args.epochs
+else:
+    epochs = 12
 
+print_every = 40
+steps = 0
 
-def load_checkpoint(filepath):
-    """
-    Load model checkpoint from file.
-    """
-    checkpoint = torch.load(filepath, map_location=lambda storage, loc: storage)
-    _model = getattr(torchvision.models, checkpoint['pretrained_model'])(pretrained=True)
-    _model.input_size = checkpoint['input_size']
-    _model.output_size = checkpoint['output_size']
-    _model.learning_rate = checkpoint['learning_rate']
-    _model.hidden_units = checkpoint['hidden_units']
-    _model.classifier = checkpoint['classifier']
-    _model.epochs = checkpoint['epochs']
-    _model.load_state_dict(checkpoint['state_dict'])
-    _model.class_to_idx = checkpoint['class_to_idx']
-    _model.optimizer = checkpoint['optimizer']
-    return _model
+#runing through epochs
+for e in range (epochs):
+    running_loss = 0
+    for ii, (inputs, labels) in enumerate (train_loader):
+        steps += 1
+        inputs, labels = inputs.to(device), labels.to(device)
+        optimizer.zero_grad () #where optimizer is working on classifier paramters only
 
+        # Forward and backward passes
+        outputs = model.forward (inputs) #calculating output
+        loss = criterion (outputs, labels) #calculating loss (cost function)
+        loss.backward ()
+        optimizer.step () #performs single optimization step
+        running_loss += loss.item () # loss.item () returns scalar value of Loss function
 
-def process_image(image):
-    """
-    Process the input image for prediction.
-    """
-    resize = 256
-    crop_size = 224
+        if steps % print_every == 0:
+            model.eval () #switching to evaluation mode so that dropout is turned off
+            # Turn off gradients for validation, saves memory and computations
+            with torch.no_grad():
+                valid_loss, accuracy = validation(model, valid_loader, criterion)
 
-    # Resize and crop image
-    image = image.resize((resize, resize))
-    left = (resize - crop_size) / 2
-    top = (resize - crop_size) / 2
-    right = left + crop_size
-    bottom = top + crop_size
-    image = image.crop((left, top, right, bottom))
+            print("Epoch: {}/{}.. ".format(e+1, epochs),
+                  "Training Loss: {:.3f}.. ".format(running_loss/print_every),
+                  "Valid Loss: {:.3f}.. ".format(valid_loss/len(valid_loader)),
+                  "Valid Accuracy: {:.3f}%".format(accuracy/len(valid_loader)*100))
 
-    # Normalize image
-    np_image = np.array(image) / 255.0
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    np_image = (np_image - mean) / std
-    np_image = np_image.transpose((2, 0, 1))
-    return np_image
+            running_loss = 0
+            # Make sure training is back on
+            model.train()
 
+#saving trained Model
+model.to ('cpu') #no need to use cuda for saving/loading model.
+# Save the checkpoint
+model.class_to_idx = train_image_datasets.class_to_idx #saving mapping between predicted class and class name,
+#second variable is a class name in numeric
 
-def predict(image_path, model, top_k, gpu):
-    """
-    Predict the top K classes of an image.
-    """
-    if gpu:
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-    model.to(device)
-
-    image = Image.open(image_path)
-    image = process_image(image)
-    image = torch.from_numpy(image)
-    image = image.unsqueeze_(0)
-    image = image.float()
-
-    with torch.no_grad():
-        output = model.forward(image.cuda())
-
-    p = F.softmax(output.data, dim=1)
-
-    top_p = np.array(p.topk(top_k)[0][0])
-
-    index_to_class = {val: key for key, val in model.class_to_idx.items()}
-    top_classes = [np.int(index_to_class[each]) for each in np.array(p.topk(top_k)[1][0])]
-
-    return top_p, top_classes, device
-
-
-def load_names(category_names_file):
-    """
-    Load category names from file.
-    """
-    with open(category_names_file) as file:
-        category_names = json.load(file)
-    return category_names
-
-
-def main():
-    """
-    Main function for predicting the image class.
-    """
-    args = parse_args()
-    image_path = args.image_path
-    checkpoint = args.checkpoint
-    top_k = args.top_k
-    category_names = args.category_names
-    gpu = args.gpu
-
-    model = load_checkpoint(checkpoint)
-
-    top_p, classes, device = predict(image_path, model, top_k, gpu)
-
-    category_names = load_names(category_names)
-
-    labels = [category_names[str(index)] for index in classes]
-
-    print(f"Results for your File: {image_path}")
-    print(labels)
-    print(top_p)
-    print()
-
-    for i in range(len(labels)):
-        print("{} - {} with a probability of {}".format((i+1), labels[i], top_p[i]))
-
-
-if __name__ == "__main__":
-    main()
+#creating dictionary for model saving
+checkpoint = {'classifier': model.classifier,
+              'state_dict': model.state_dict (),
+              'arch': arch,
+              'mapping':    model.class_to_idx
+             }
+#saving trained model for future use
+if args.save_dir:
+    torch.save (checkpoint, args.save_dir + '/checkpoint.pth')
+else:
+    torch.save (checkpoint, 'checkpoint.pth')
