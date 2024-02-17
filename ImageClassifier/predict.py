@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser (description = "Parser of training script")
 
 parser.add_argument ('data_dir', help = 'Provide data directory. Mandatory argument', type = str)
 parser.add_argument ('--save_dir', help = 'Provide saving directory. Optional argument', type = str)
-parser.add_argument ('--arch', help = 'Vgg13 can be used if this argument specified, otherwise Alexnet will be used', type = str)
+parser.add_argument ('--arch', help = 'Vgg16 can be used if this argument specified, otherwise Alexnet will be used', type = str)
 parser.add_argument ('--lrn', help = 'Learning rate, default value 0.001', type = float)
 parser.add_argument ('--hidden_units', help = 'Hidden units in Classifier. Default value is 2048', type = int)
 parser.add_argument ('--epochs', help = 'Number of epochs', type = int)
